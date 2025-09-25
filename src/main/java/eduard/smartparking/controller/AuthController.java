@@ -1,0 +1,100 @@
+package eduard.smartparking.controller;
+
+import jakarta.validation.Valid;
+import eduard.smartparking.dto.JwtResponse;
+import eduard.smartparking.dto.LoginRequest;
+import eduard.smartparking.dto.RegisterRequest;
+import eduard.smartparking.model.ERole;
+import eduard.smartparking.model.Role;
+import eduard.smartparking.model.User;
+import eduard.smartparking.repository.RoleRepository;
+import eduard.smartparking.repository.UserRepository;
+import eduard.smartparking.security.JwtUtils;
+import eduard.smartparking.security.UserDetailsImpl;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.HashSet;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+@RestController
+@RequestMapping("/api/auth")
+@Validated
+public class AuthController {
+    private final AuthenticationManager authenticationManager;
+    private final UserRepository userRepo;
+    private final RoleRepository roleRepo;
+    private final PasswordEncoder encoder;
+    private final JwtUtils jwtUtils;
+
+
+    public AuthController(AuthenticationManager authenticationManager, UserRepository userRepo, RoleRepository roleRepo, PasswordEncoder encoder, JwtUtils jwtUtils) {
+        this.authenticationManager = authenticationManager;
+        this.userRepo = userRepo;
+        this.roleRepo = roleRepo;
+        this.encoder = encoder;
+        this.jwtUtils = jwtUtils;
+    }
+
+     @PostMapping("/signin")
+    public ResponseEntity<?> authenticateUser(
+             @Valid @RequestBody LoginRequest loginRequest) {
+
+        Authentication authentication = authenticationManager.authenticate(
+                new UsernamePasswordAuthenticationToken(loginRequest.getEmail(), loginRequest.getPassword())
+        );
+
+        SecurityContextHolder.getContext().setAuthentication(authentication);
+        String jwt = jwtUtils.generateJwtToken(authentication);
+
+        UserDetailsImpl userDetails = (UserDetailsImpl) authentication.getPrincipal();
+        List<? extends GrantedAuthority> roles = userDetails.getAuthorities().stream().collect(Collectors.toList());
+
+        return ResponseEntity.ok(new JwtResponse(jwt,
+                userDetails.getId(),
+                userDetails.getUsername(),
+                roles));
+    }
+
+     @PostMapping("/signup")
+    public ResponseEntity<?> registerUser(
+           @Valid @RequestBody RegisterRequest signUpRequest) {
+
+        if (userRepo.existsByEmail(signUpRequest.getEmail())) {
+            return ResponseEntity
+                    .badRequest()
+                    .body("Error: Email is already in use!");
+        }
+
+        // Create new user's account
+        User user = new User(signUpRequest.getName(),
+                signUpRequest.getEmail(),
+                encoder.encode(signUpRequest.getPassword()),
+                signUpRequest.getPhone());
+
+        Set<Role> roles = new HashSet<>();
+        Optional<Role> userRole = roleRepo.findByName(ERole.ROLE_USER);
+
+        if(userRole.isPresent()) {
+            roles.add(userRole.get());
+
+            user.setRoles(roles);
+            userRepo.save(user);
+        }else {
+            throw new RuntimeException("Role not found: ROLE_USER");
+        }
+        return ResponseEntity.ok("User registered successfully!");
+    }
+
+
+}
